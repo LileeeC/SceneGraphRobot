@@ -1,0 +1,21 @@
+# 忽略 CMake 編譯產生的所有檔案
+build/
+.cache/
+CMakeFiles/
+CMakeSettings.json
+
+# 忽略編譯器產生的執行檔與庫
+*.exe
+*.obj
+*.lib
+*.dll
+*.pdb
+
+# 忽略 VS Code 與 Visual Studio 的個人設定檔
+.vscode/
+.vs/
+out/
+
+# 忽略作業系統暫存檔
+.DS_Store
+Thumbs.db
