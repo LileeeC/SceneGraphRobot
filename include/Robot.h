@@ -2,57 +2,61 @@
 
 #include "SceneNode.h"
 #include <glm/glm.hpp>
-#include <vector>
 
 // ============================================================
-//  Robot.h  —  機器人階層結構定義
-//
-//  場景樹深度 ≥ 3 層（從 root 到 foot 共 5 層）：
-//
-//  root  (世界錨點，僅做整體平移/旋轉)
-//   └── body        (軀幹)
-//        ├── head        (頭部)
-//        ├── leftUpperArm
-//        │    └── leftLowerArm
-//        ├── rightUpperArm
-//        │    └── rightLowerArm
-//        ├── leftUpperLeg     ← 深度示範主線
-//        │    └── leftLowerLeg
-//        │         └── leftFoot   ← 第 5 層（深度 ≥ 3 從 root 算起）
-//        └── rightUpperLeg
-//             └── rightLowerLeg
-//                  └── rightFoot
+//  Robot.h  —  機器人階層結構 + 動畫狀態機
 // ============================================================
 
+// ------------------------------------------------------------
+//  動畫模式列舉
+// ------------------------------------------------------------
+enum class RobotMode {
+    IDLE,   // 原地呼吸：身體浮動 + 雙臂微擺
+    WALK,   // 走路：手腳交叉擺動 + 膝蓋連動彎曲
+    KICK    // 踢球：右腿蓄力 -> 踢出 -> 收回
+};
+
+// ============================================================
+//  Robot 類別
+// ============================================================
 class Robot {
 public:
     Robot()  = default;
-    ~Robot(); // 釋放所有以 new 建立的節點
+    ~Robot();
 
     // --------------------------------------------------------
-    //  初始化：建立階層、設定初始位置與形狀
+    //  初始化
     // --------------------------------------------------------
     void initRobot(unsigned int cubeVAO);
 
     // --------------------------------------------------------
-    //  每幀呼叫：更新動畫、繪製整棵樹
+    //  狀態機控制
     // --------------------------------------------------------
 
-    /// 更新整棵場景樹的 globalTransform（動畫時修改各節點
-    /// 的 localTransform 後呼叫此函式即可）。
-    void update();
+    /// 切換動畫模式。
+    /// 記錄切換時刻的 time 作為新動畫的時間基點，
+    /// 確保 localTime 從 0 重新開始，避免關節跳變。
+    void setMode(RobotMode mode, float currentTime);
 
-    /// DFS 遍歷場景樹並繪製每個節點。
-    ///
-    /// MVP 計算：
-    ///   MVP = viewProjection × globalTransform × meshScale
-    ///
-    ///   · meshScale      : 最先執行，把單位方塊縮放成各部位形狀
-    ///   · globalTransform: 再執行，把方塊放到世界座標中的正確位置
-    ///   · viewProjection : 最後執行，套用攝影機投影
-    void draw(unsigned int shaderProgram, const glm::mat4& viewProjection);
+    RobotMode currentMode { RobotMode::IDLE };
 
-    // 公開節點指標（方便 main.cpp 做動畫控制）
+    // --------------------------------------------------------
+    //  每幀更新（取代舊版 update()）
+    // --------------------------------------------------------
+
+    /// 根據 currentMode 與全域時間計算各關節 localTransform，
+    /// 再呼叫 root->update() 刷新整棵樹的 globalTransform。
+    void updateAnimation(float time);
+
+    // --------------------------------------------------------
+    //  繪製
+    // --------------------------------------------------------
+    void draw(unsigned int shaderProgram,
+            const glm::mat4& viewProjection);
+
+    // --------------------------------------------------------
+    //  節點指標（公開，方便 main.cpp 額外控制）
+    // --------------------------------------------------------
     SceneNode* root          { nullptr };
     SceneNode* body          { nullptr };
     SceneNode* head          { nullptr };
@@ -71,6 +75,60 @@ public:
     SceneNode* rightFoot     { nullptr };
 
 private:
-    /// DFS 繪製輔助函式（遞迴）
-    void drawNode(SceneNode* node, unsigned int shaderProgram, const glm::mat4& viewProjection);
+    // --------------------------------------------------------
+    //  各部位「靜止時」相對父節點的平移偏移
+    //  updateAnimation 每幀重建 localTransform 時使用
+    // --------------------------------------------------------
+    struct RestPose {
+        glm::vec3 bodyOffset       { 0.00f,  0.00f, 0.00f };
+        glm::vec3 headOffset       { 0.00f,  0.60f, 0.00f };
+
+        glm::vec3 lUpperArmOffset  {-0.45f,  0.25f, 0.00f };
+        glm::vec3 lLowerArmOffset  { 0.00f, -0.45f, 0.00f };
+        glm::vec3 rUpperArmOffset  { 0.45f,  0.25f, 0.00f };
+        glm::vec3 rLowerArmOffset  { 0.00f, -0.45f, 0.00f };
+
+        glm::vec3 lUpperLegOffset  {-0.18f, -0.55f, 0.00f };
+        glm::vec3 lLowerLegOffset  { 0.00f, -0.50f, 0.00f };
+        glm::vec3 lFootOffset      { 0.00f, -0.28f, 0.05f };
+
+        glm::vec3 rUpperLegOffset  { 0.18f, -0.55f, 0.00f };
+        glm::vec3 rLowerLegOffset  { 0.00f, -0.50f, 0.00f };
+        glm::vec3 rFootOffset      { 0.00f, -0.28f, 0.05f };
+    } rest;
+
+    // 記錄切換模式時的時間基點
+    float modeStartTime { 0.0f };
+
+    // --------------------------------------------------------
+    //  各模式動畫（私有，由 updateAnimation 分派）
+    // --------------------------------------------------------
+    void animateIdle(float localTime);
+    void animateWalk(float localTime);
+    void animateKick(float localTime);
+
+    // --------------------------------------------------------
+    //  工具：安全重建節點的 localTransform
+    //
+    //  公式：localTransform = T(offset) x Rx x Ry x Rz
+    //
+    //  執行順序（GLM Column-Major，由右至左）：
+    //    1. Rz  繞 Z 軸旋轉
+    //    2. Ry  繞 Y 軸旋轉
+    //    3. Rx  繞 X 軸旋轉
+    //    4. T   平移到靜止位置
+    //  每幀從單位矩陣重新計算，絕不累加，角度不爆炸。
+    // --------------------------------------------------------
+    static void setLocalTransform(
+        SceneNode*       node,
+        const glm::vec3& offset,
+        float            angleX,
+        float            angleY = 0.0f,
+        float            angleZ = 0.0f
+    );
+
+    // DFS 繪製輔助
+    void drawNode(SceneNode* node,
+                unsigned int shaderProgram,
+                const glm::mat4& viewProjection);
 };
