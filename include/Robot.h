@@ -4,59 +4,40 @@
 #include <glm/glm.hpp>
 
 // ============================================================
-//  Robot.h  —  機器人階層結構 + 動畫狀態機
+//  Robot.h  --  Hierarchical robot with animation state machine
+//
+//  Scene tree depth >= 5 layers:
+//    root(1) -> body(2) -> upperLeg(3) -> lowerLeg(4) -> foot(5)
 // ============================================================
 
-// ------------------------------------------------------------
-//  動畫模式列舉
-// ------------------------------------------------------------
 enum class RobotMode {
-    IDLE,   // 原地呼吸：身體浮動 + 雙臂微擺
-    WALK,   // 走路：手腳交叉擺動 + 膝蓋連動彎曲
-    KICK    // 踢球：右腿蓄力 -> 踢出 -> 收回
+    IDLE,   // Breathing idle: body bob + arm sway
+    WALK,   // Walk in circle: cross-limb swing + knee coupling
+    KICK    // Kick: wind-up -> strike -> follow-through -> recover
 };
 
-// ============================================================
-//  Robot 類別
-// ============================================================
 class Robot {
 public:
     Robot()  = default;
     ~Robot();
 
-    // --------------------------------------------------------
-    //  初始化
-    // --------------------------------------------------------
     void initRobot(unsigned int cubeVAO);
 
-    // --------------------------------------------------------
-    //  狀態機控制
-    // --------------------------------------------------------
-
-    /// 切換動畫模式。
-    /// 記錄切換時刻的 time 作為新動畫的時間基點，
-    /// 確保 localTime 從 0 重新開始，避免關節跳變。
+    // Switch mode; pass current glfwGetTime() to reset the
+    // local clock and prevent joint angle jump-cuts.
     void setMode(RobotMode mode, float currentTime);
 
     RobotMode currentMode { RobotMode::IDLE };
 
-    // --------------------------------------------------------
-    //  每幀更新（取代舊版 update()）
-    // --------------------------------------------------------
-
-    /// 根據 currentMode 與全域時間計算各關節 localTransform，
-    /// 再呼叫 root->update() 刷新整棵樹的 globalTransform。
+    // Compute all localTransforms for this frame, then
+    // call root->update() to refresh all globalTransforms.
     void updateAnimation(float time);
 
-    // --------------------------------------------------------
-    //  繪製
-    // --------------------------------------------------------
+    // DFS draw traversal
     void draw(unsigned int shaderProgram,
             const glm::mat4& viewProjection);
 
-    // --------------------------------------------------------
-    //  節點指標（公開，方便 main.cpp 額外控制）
-    // --------------------------------------------------------
+    // --- Public node pointers (for external animation control) ---
     SceneNode* root          { nullptr };
     SceneNode* body          { nullptr };
     SceneNode* head          { nullptr };
@@ -75,10 +56,9 @@ public:
     SceneNode* rightFoot     { nullptr };
 
 private:
-    // --------------------------------------------------------
-    //  各部位「靜止時」相對父節點的平移偏移
-    //  updateAnimation 每幀重建 localTransform 時使用
-    // --------------------------------------------------------
+    // Rest-pose offsets (translation only, relative to parent).
+    // Stored here so updateAnimation() can rebuild localTransform
+    // from scratch every frame without accumulating angles.
     struct RestPose {
         glm::vec3 bodyOffset       { 0.00f,  0.00f, 0.00f };
         glm::vec3 headOffset       { 0.00f,  0.60f, 0.00f };
@@ -97,28 +77,14 @@ private:
         glm::vec3 rFootOffset      { 0.00f, -0.28f, 0.05f };
     } rest;
 
-    // 記錄切換模式時的時間基點
     float modeStartTime { 0.0f };
 
-    // --------------------------------------------------------
-    //  各模式動畫（私有，由 updateAnimation 分派）
-    // --------------------------------------------------------
     void animateIdle(float localTime);
-    void animateWalk(float localTime);
+    void animateWalk(float globalTime, float localTime);
     void animateKick(float localTime);
 
-    // --------------------------------------------------------
-    //  工具：安全重建節點的 localTransform
-    //
-    //  公式：localTransform = T(offset) x Rx x Ry x Rz
-    //
-    //  執行順序（GLM Column-Major，由右至左）：
-    //    1. Rz  繞 Z 軸旋轉
-    //    2. Ry  繞 Y 軸旋轉
-    //    3. Rx  繞 X 軸旋轉
-    //    4. T   平移到靜止位置
-    //  每幀從單位矩陣重新計算，絕不累加，角度不爆炸。
-    // --------------------------------------------------------
+    // Safely rebuild localTransform = T(offset) * Rx * Ry * Rz.
+    // Always starts from identity -- angles never accumulate.
     static void setLocalTransform(
         SceneNode*       node,
         const glm::vec3& offset,
@@ -127,7 +93,6 @@ private:
         float            angleZ = 0.0f
     );
 
-    // DFS 繪製輔助
     void drawNode(SceneNode* node,
                 unsigned int shaderProgram,
                 const glm::mat4& viewProjection);

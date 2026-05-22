@@ -7,7 +7,7 @@
 #include <iostream>
 #include <string>
 
-// 引入更新後的場景圖與機器人狀態機
+#include "ShaderSources.h"
 #include "SceneNode.h"
 #include "Robot.h"
 
@@ -17,6 +17,7 @@ void framebuffer_size_callback(GLFWwindow* window, int width, int height) {
     glViewport(0, 0, width, height);
 }
 
+// 檢查 Shader 編譯狀態
 void checkCompileErrors(unsigned int shader, string type) {
     int success;
     char infoLog[1024];
@@ -24,35 +25,55 @@ void checkCompileErrors(unsigned int shader, string type) {
         glGetShaderiv(shader, GL_COMPILE_STATUS, &success);
         if (!success) {
             glGetShaderInfoLog(shader, 1024, NULL, infoLog);
-            cerr << "❌ SHADER 錯誤 [" << type << "]:\n" << infoLog << endl;
+            cerr << "SHADER COMPILATION ERROR [" << type << "]:\n" << infoLog << endl;
         }
     } else {
         glGetProgramiv(shader, GL_LINK_STATUS, &success);
         if (!success) {
             glGetProgramInfoLog(shader, 1024, NULL, infoLog);
-            cerr << "❌ SHADER PROGRAM 連結錯誤:\n" << infoLog << endl;
+            cerr << "SHADER PROGRAM LINKING ERROR:\n" << infoLog << endl;
         }
     }
 }
 
-// Vertex Shader
-const char* vertexShaderSource = R"(
-    #version 330 core
-    layout (location = 0) in vec3 aPos;
-    uniform mat4 u_MVP;
-    void main() {
-        gl_Position = u_MVP * vec4(aPos, 1.0);
-    }
-)";
+// camera 參數
+glm::vec3 cameraPos   = glm::vec3(0.0f, 1.5f, 5.0f);
+glm::vec3 cameraTarget = glm::vec3(0.0f, 0.5f, 0.0f);
+glm::vec3 cameraUp     = glm::vec3(0.0f, 1.0f, 0.0f);
 
-// Fragment Shader
-const char* fragmentShaderSource = R"(
-    #version 330 core
-    out vec4 FragColor;
-    void main() {
-        FragColor = vec4(0.0f, 1.0f, 0.7f, 1.0f); // 高科技線框綠色
-    }
-)";
+const float CAM_MOVE_SPEED   = 2.5f;
+const float CAM_STRAFE_SPEED = 2.0f;
+
+// 鍵盤輸入
+void processInput(GLFWwindow* window, float deltaTime, Robot& robot) {
+    // 靜態變數記錄上一幀的按鍵狀態，防止重複觸發
+    static int prevKey1 = GLFW_RELEASE;
+    static int prevKey2 = GLFW_RELEASE;
+    static int prevKey3 = GLFW_RELEASE;
+
+    int k1 = glfwGetKey(window, GLFW_KEY_1);
+    int k2 = glfwGetKey(window, GLFW_KEY_2);
+    int k3 = glfwGetKey(window, GLFW_KEY_3);
+
+    float now = (float)glfwGetTime();
+    if (k1 == GLFW_PRESS && prevKey1 == GLFW_RELEASE) robot.setMode(RobotMode::IDLE, now);
+    if (k2 == GLFW_PRESS && prevKey2 == GLFW_RELEASE) robot.setMode(RobotMode::WALK, now);
+    if (k3 == GLFW_PRESS && prevKey3 == GLFW_RELEASE) robot.setMode(RobotMode::KICK, now);
+
+    prevKey1 = k1; prevKey2 = k2; prevKey3 = k3;
+
+    // 方向感知 Camera 控制
+    glm::vec3 forward = glm::normalize(cameraTarget - cameraPos);
+    glm::vec3 right   = glm::normalize(glm::cross(forward, cameraUp));
+
+    if (glfwGetKey(window, GLFW_KEY_UP)    == GLFW_PRESS) cameraPos += forward * CAM_MOVE_SPEED * deltaTime;
+    if (glfwGetKey(window, GLFW_KEY_DOWN)  == GLFW_PRESS) cameraPos -= forward * CAM_MOVE_SPEED * deltaTime;
+    if (glfwGetKey(window, GLFW_KEY_LEFT)  == GLFW_PRESS) cameraPos -= right   * CAM_STRAFE_SPEED * deltaTime;
+    if (glfwGetKey(window, GLFW_KEY_RIGHT) == GLFW_PRESS) cameraPos += right   * CAM_STRAFE_SPEED * deltaTime;
+
+    if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
+        glfwSetWindowShouldClose(window, true);
+}
 
 int main() {
     if (!glfwInit()) return -1;
@@ -60,27 +81,29 @@ int main() {
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
-    GLFWwindow* window = glfwCreateWindow(1024, 768, "HW3 - Scene Graph Robot Controller", NULL, NULL);
+    GLFWwindow* window = glfwCreateWindow(1024, 768, "HW3 - Blinn-Phong Scene Graph Robot", NULL, NULL);
     if (!window) { glfwTerminate(); return -1; }
     glfwMakeContextCurrent(window);
     glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
 
     if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress)) return -1;
 
-    glEnable(GL_DEPTH_TEST); 
-    glPolygonMode(GL_FRONT_AND_BACK, GL_LINE); // 線框模式
+    glEnable(GL_DEPTH_TEST);
+    glPolygonMode(GL_FRONT_AND_BACK, GL_FILL); 
 
-    // 編譯著色器
+    // compile Vertex Shader
     unsigned int vertexShader = glCreateShader(GL_VERTEX_SHADER);
-    glShaderSource(vertexShader, 1, &vertexShaderSource, NULL);
+    glShaderSource(vertexShader, 1, &VERTEX_SHADER_SRC, NULL);
     glCompileShader(vertexShader);
     checkCompileErrors(vertexShader, "VERTEX");
 
+    // compile Fragment Shader
     unsigned int fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
-    glShaderSource(fragmentShader, 1, &fragmentShaderSource, NULL);
+    glShaderSource(fragmentShader, 1, &FRAGMENT_SHADER_SRC, NULL);
     glCompileShader(fragmentShader);
     checkCompileErrors(fragmentShader, "FRAGMENT");
 
+    // connect Shader Program
     unsigned int shaderProgram = glCreateProgram();
     glAttachShader(shaderProgram, vertexShader);
     glAttachShader(shaderProgram, fragmentShader);
@@ -90,76 +113,72 @@ int main() {
     glDeleteShader(vertexShader);
     glDeleteShader(fragmentShader);
 
-    // 立方體頂點資料
-    float cubeVertices[] = {
-        -0.5f, -0.5f, -0.5f,  0.5f, -0.5f, -0.5f,  0.5f,  0.5f, -0.5f,
-         0.5f,  0.5f, -0.5f, -0.5f,  0.5f, -0.5f, -0.5f, -0.5f, -0.5f,
-        -0.5f, -0.5f,  0.5f,  0.5f, -0.5f,  0.5f,  0.5f,  0.5f,  0.5f,
-         0.5f,  0.5f,  0.5f, -0.5f,  0.5f,  0.5f, -0.5f, -0.5f,  0.5f,
-        -0.5f,  0.5f,  0.5f, -0.5f,  0.5f, -0.5f, -0.5f, -0.5f, -0.5f,
-        -0.5f, -0.5f, -0.5f, -0.5f, -0.5f,  0.5f, -0.5f,  0.5f,  0.5f,
-         0.5f,  0.5f,  0.5f,  0.5f,  0.5f, -0.5f,  0.5f, -0.5f, -0.5f,
-         0.5f, -0.5f, -0.5f,  0.5f, -0.5f,  0.5f,  0.5f,  0.5f,  0.5f,
-        -0.5f, -0.5f, -0.5f,  0.5f, -0.5f, -0.5f,  0.5f, -0.5f,  0.5f,
-         0.5f, -0.5f,  0.5f, -0.5f, -0.5f,  0.5f, -0.5f, -0.5f, -0.5f,
-        -0.5f,  0.5f, -0.5f,  0.5f,  0.5f, -0.5f,  0.5f,  0.5f,  0.5f,
-         0.5f,  0.5f,  0.5f, -0.5f,  0.5f,  0.5f, -0.5f,  0.5f, -0.5f
-    };
+    // 6 floats/vertex VAO/VBO
+    unsigned int cubeVAO, cubeVBO;
+    glGenVertexArrays(1, &cubeVAO);
+    glGenBuffers(1, &cubeVBO);
 
-    unsigned int VBO, VAO;
-    glGenVertexArrays(1, &VAO);
-    glGenBuffers(1, &VBO);
+    glBindVertexArray(cubeVAO);
+    glBindBuffer(GL_ARRAY_BUFFER, cubeVBO);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(CUBE_VERTICES), CUBE_VERTICES, GL_STATIC_DRAW);
 
-    glBindVertexArray(VAO);
-    glBindBuffer(GL_ARRAY_BUFFER, VBO);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(cubeVertices), cubeVertices, GL_STATIC_DRAW);
-
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+    // a_Position
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, CUBE_STRIDE, (void*)0);
     glEnableVertexAttribArray(0);
 
-    // 初始化機器人場景圖
+    // a_Normal
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, CUBE_STRIDE, (void*)(3 * sizeof(float)));
+    glEnableVertexAttribArray(1);
+
+    glBindVertexArray(0);
+
+    // 世界靜態平行光源方向
+    glm::vec3 lightDir = glm::normalize(glm::vec3(1.2f, 2.0f, 1.5f));
+    glUseProgram(shaderProgram);
+    glUniform3fv(glGetUniformLocation(shaderProgram, "u_LightDir"), 1, glm::value_ptr(lightDir));
+
+    // init
     Robot robot;
-    robot.initRobot(VAO);
+    robot.initRobot(cubeVAO);
 
-    // 設定基礎 3D 投影與攝影機矩陣
-    glm::mat4 projection = glm::perspective(glm::radians(45.0f), 1024.0f / 768.0f, 0.1f, 100.0f);
-    glm::mat4 view = glm::lookAt(glm::vec3(2.0f, 1.5f, 4.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
-    glm::mat4 viewProjection = projection * view;
+    float lastFrameTime = 0.0f;
+    cout << "系統啟動" << endl;
 
-    cout << "🎮 機器人系統安全對接！鍵盤操控指南：" << endl;
-    cout << "  [按 1] 切换至 IDLE 呼吸模式" << endl;
-    cout << "  [按 2] 切换至 WALK 逼真走路模式" << endl;
-    cout << "  [按 3] 切换至 KICK 高級非線性踢球模式" << endl;
-
-    // 主循環
+    // main loop
     while (!glfwWindowShouldClose(window)) {
-        if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
-            glfwSetWindowShouldClose(window, true);
-
-        // ── 核心改變：即時監聽按鍵，切換模式時傳入全域時間 ──
         float currentTime = (float)glfwGetTime();
-        if (glfwGetKey(window, GLFW_KEY_1) == GLFW_PRESS) robot.setMode(RobotMode::IDLE, currentTime);
-        if (glfwGetKey(window, GLFW_KEY_2) == GLFW_PRESS) robot.setMode(RobotMode::WALK, currentTime);
-        if (glfwGetKey(window, GLFW_KEY_3) == GLFW_PRESS) robot.setMode(RobotMode::KICK, currentTime);
+        float deltaTime   = currentTime - lastFrameTime;
+        lastFrameTime     = currentTime;
 
-        glClearColor(0.05f, 0.08f, 0.15f, 1.0f);
+        // 輸入監聽
+        processInput(window, deltaTime, robot);
+
+        // 清除畫布
+        glClearColor(0.08f, 0.09f, 0.11f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
         glUseProgram(shaderProgram);
 
-        // 讓整隻機器人（Root）隨時間緩慢旋轉，方便評分時展示 3D 階層結構
-        robot.root->localTransform = glm::rotate(glm::mat4(1.0f), currentTime * 0.4f, glm::vec3(0.0f, 1.0f, 0.0f));
+        // 動態將攝影機世界座標送入 Shader，用於計算 Blinn-Phong 高光
+        glUniform3fv(glGetUniformLocation(shaderProgram, "u_ViewPos"), 1, glm::value_ptr(cameraPos));
 
-        // ── 更新動畫狀態機與場景圖 ──
-        robot.updateAnimation(currentTime); // 內部會自動處理 localTime 與呼叫 root->update()
-        robot.draw(shaderProgram, viewProjection); 
+        // compute View Projection matrix
+        int winW, winH;
+        glfwGetFramebufferSize(window, &winW, &winH);
+        float aspect = (winH > 0) ? (float)winW / (float)winH : 1.0f;
+
+        glm::mat4 view       = glm::lookAt(cameraPos, cameraTarget, cameraUp);
+        glm::mat4 projection = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 100.0f);
+        glm::mat4 VP         = projection * view;
+
+        robot.updateAnimation(currentTime);
+        robot.draw(shaderProgram, VP);
 
         glfwSwapBuffers(window);
         glfwPollEvents();
     }
 
-    glDeleteVertexArrays(1, &VAO);
-    glDeleteBuffers(1, &VBO);
+    glDeleteVertexArrays(1, &cubeVAO);
+    glDeleteBuffers(1, &cubeVBO);
     glDeleteProgram(shaderProgram);
 
     glfwTerminate();

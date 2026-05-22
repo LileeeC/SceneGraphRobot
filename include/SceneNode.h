@@ -2,72 +2,58 @@
 
 #include <vector>
 #include <glm/glm.hpp>
+
 // ============================================================
-//  SceneNode.h  —  場景圖節點定義
+//  SceneNode.h  --  Scene Graph Node
 //
-//  【矩陣慣例】
-//    本專案使用「Column-Major」儲存（GLM 預設），
-//    變換乘法順序為：先縮放、再旋轉、再平移（TRS）。
-//    子節點世界矩陣 = 父節點世界矩陣 × 自身 localTransform
+//  Matrix convention: Column-Major (GLM default)
+//  Multiplication order: T * R * S  (right-to-left execution)
+//  Child world matrix = parent.globalTransform * self.localTransform
 // ============================================================
 
 class SceneNode {
 public:
-    // --------------------------------------------------------
-    //  變換矩陣
-    // --------------------------------------------------------
+    // --- Transforms -----------------------------------------
 
-    /// 相對於「父節點」的變換（平移 × 旋轉，不含 meshScale）。
-    /// 由外部在建構機器人時設定，動畫時每幀修改此矩陣即可。
+    // Relative transform to parent (translation + rotation, NO meshScale)
     glm::mat4 localTransform  { glm::mat4(1.0f) };
 
-    /// 在世界座標系中的最終變換矩陣。
-    /// 由 update() 每幀自動計算，外部只需讀取，不應手動賦值。
+    // Final world-space transform, auto-computed by update()
     glm::mat4 globalTransform { glm::mat4(1.0f) };
 
-    /// 僅用於「繪製當前節點的方塊形狀」的縮放矩陣。
-    /// 刻意與 localTransform 分離，確保縮放不會向下傳遞給子節點，
-    /// 避免子節點方塊連帶被放大或壓縮。
+    // Shape scale for THIS node's mesh only.
+    // Kept separate so it does NOT propagate to children.
     glm::mat4 meshScale       { glm::mat4(1.0f) };
 
-    // --------------------------------------------------------
-    //  場景圖結構
-    // --------------------------------------------------------
+    // --- Per-node appearance --------------------------------
 
-    /// 指向父節點；根節點的 parent 為 nullptr。
+    // Diffuse color sent to the fragment shader as u_Color
+    glm::vec3 nodeColor { 0.8f, 0.8f, 0.8f };
+
+    // --- Graph structure ------------------------------------
+
     SceneNode* parent { nullptr };
-
-    /// 所有直接子節點的指標列表。
     std::vector<SceneNode*> children;
 
-    // --------------------------------------------------------
-    //  儲存繪製所需的 OpenGL 資源（選填）
-    // --------------------------------------------------------
-
-    /// 該節點使用的 VAO（可讓不同節點共用同一個方塊 VAO）。
+    // OpenGL VAO handle (0 = logical anchor, not drawn)
     unsigned int vao { 0 };
 
-    // --------------------------------------------------------
-    //  建構 / 析構
-    // --------------------------------------------------------
+    // --- Lifecycle ------------------------------------------
 
     SceneNode()  = default;
-    ~SceneNode() = default;   // 記憶體由 Robot 統一管理
+    ~SceneNode() = default;
 
-    // --------------------------------------------------------
-    //  場景圖操作
-    // --------------------------------------------------------
-
-    /// 將 child 掛載為本節點的子節點，並設定 child->parent 指標。
+    // Attach child and set child->parent pointer
     void addChild(SceneNode* child);
 
-    /// 遞迴更新整棵子樹的 globalTransform。
-    ///
-    /// 呼叫順序：
-    ///   root->update(glm::mat4(1.0f));   // 從根節點、傳入單位矩陣
-    ///
-    /// 計算規則：
-    ///   globalTransform = parentTransform × localTransform
-    ///   （先套用父節點世界變換，再套用自身局部變換）
+    // Recursively recompute globalTransform for this subtree.
+    // Call as: root->update(glm::mat4(1.0f))
+    //
+    // Formula: globalTransform = parentTransform * localTransform
+    //   GLM A*B means "apply B first, then A", so:
+    //   the local transform is applied in parent space -- correct.
+    //
+    // meshScale is intentionally excluded here; it is applied
+    // only during draw() and must NOT affect children.
     void update(const glm::mat4& parentTransform);
 };
